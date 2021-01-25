@@ -6,6 +6,60 @@ class StreamEntitiesHelper {
         this.streamedEntities = new Map();
         this.client = client;
     }
+    entityStreamedIn(entity) {
+        if (entity.constructor.name == "EntityCharacter")
+            this.onCharacterStreamIn(entity);
+        if (entity.constructor.name == "EntityVehicle")
+            this.onVehicleStreamIn(entity);
+        if (entity.constructor.name == "EntityObject")
+            this.onObjectStreamIn(entity);
+        console.log(`Entity ${entity.id} (${entity.constructor.name}) streamed in for ${this.client.id}`);
+    }
+    entityStreamedOut(entity) {
+        if (entity.constructor.name == "EntityCharacter")
+            this.onCharacterStreamOut(entity);
+        if (entity.constructor.name == "EntityVehicle")
+            this.onVehicleStreamOut(entity);
+        if (entity.constructor.name == "EntityObject")
+            this.onObjectStreamOut(entity);
+        console.log(`Entity ${entity.id} (${entity.constructor.name}) streamed out for ${this.client.id}`);
+    }
+    onCharacterStreamIn(character) {
+        this.client.send("onCharacterStreamIn", {
+            id: character.id,
+            position: [character.position.x, character.position.y, character.position.z]
+        });
+        this.client.onServer.sendCharacterSync(character);
+    }
+    onVehicleStreamIn(vehicle) {
+        this.client.send("onVehicleStreamIn", {
+            id: vehicle.id,
+            position: [vehicle.position.x, vehicle.position.y, vehicle.position.z]
+        });
+        this.client.onServer.sendVehicleSync(vehicle);
+    }
+    onObjectStreamIn(object) {
+        this.client.send("onObjectStreamInt", {
+            id: object.id,
+            position: [object.position.x, object.position.y, object.position.z]
+        });
+        this.client.onServer.sendObjectSync(object);
+    }
+    onCharacterStreamOut(character) {
+        this.client.send("onCharacterStreamOut", {
+            id: character.id
+        });
+    }
+    onVehicleStreamOut(vehicle) {
+        this.client.send("onVehicleStreamOut", {
+            id: vehicle.id
+        });
+    }
+    onObjectStreamOut(object) {
+        this.client.send("onObjectStreamOut", {
+            id: object.id
+        });
+    }
     check() {
         var character = this.client.character;
         var server = this.client.onServer;
@@ -14,18 +68,16 @@ class StreamEntitiesHelper {
         }
         server.entities.forEach((entity) => {
             var distance = utils_1.getDistanceBetweemCoords(character.position.x, character.position.z, entity.position.x, entity.position.z);
-            if (distance < 15) {
+            if (distance < 10) {
                 if (!this.streamedEntities.has(entity.id)) {
                     this.streamedEntities.set(entity.id, entity);
-                    server.broadcastEntity(entity);
-                    console.log(`Entity ${entity.id} streamed in for ${character.id}`);
+                    this.entityStreamedIn(entity);
                 }
             }
             else {
                 if (this.streamedEntities.has(entity.id)) {
-                    this.client.send("delete_entity", entity.id);
                     this.streamedEntities.delete(entity.id);
-                    console.log(`Entity ${entity.id} streamed out for ${character.id}`);
+                    this.entityStreamedOut(entity);
                 }
             }
         });
@@ -47,19 +99,48 @@ class Client {
             var server = this.game.servers.get(serverId);
             server.handleJoinRequest(this);
         }
-        if (key == "get_initial_info") {
-            this.character = this.onServer.createEntityCharacter();
-            this.send("initial_info", { playerId: this.character.id });
-            this.checkForStreamedEntities();
-            this.onServer.entities.forEach((e) => {
-                this.onServer.broadcastEntity(e);
-            });
-            this.onServer.onPlayerConnect(this);
+        if (key == "characterSync") {
+            var entity = this.onServer.entities.get(data.id);
+            var character = entity;
+            character.onVehicleId = data.onVehicleId;
+            character.isAiming = data.isAiming;
+            character.position.x = data.position[0];
+            character.position.y = data.position[1];
+            character.position.z = data.position[2];
+            character.aimRotation.x = data.aimRotation[0];
+            character.aimRotation.y = data.aimRotation[1];
+            character.aimRotation.z = data.aimRotation[2];
+            character.aimRotation.w = data.aimRotation[3];
+            this.onServer.sendCharacterSync(character);
         }
-        if (key == "update_EntityCharacter" || key == "update_EntityVehicle") {
-            this.onServer.updateEntity(data);
+        if (key == "vehicleSync") {
+            var entity = this.onServer.entities.get(data.id);
+            var vehicle = entity;
+            vehicle.position.x = data.position[0];
+            vehicle.position.y = data.position[1];
+            vehicle.position.z = data.position[2];
+            vehicle.rotation.x = data.rotation[0];
+            vehicle.rotation.y = data.rotation[1];
+            vehicle.rotation.z = data.rotation[2];
+            vehicle.rotation.w = data.rotation[3];
+            this.onServer.sendVehicleSync(vehicle);
         }
-        if (key == "user_chat") {
+        if (key == "objectSync") {
+            var entity = this.onServer.entities.get(data.id);
+            var object = entity;
+            object.position.x = data.position[0];
+            object.position.y = data.position[1];
+            object.position.z = data.position[2];
+            this.onServer.sendObjectSync(object);
+        }
+        if (key == "characterActiveWeapon") {
+            this.onServer.sendPacketToAllStreamed(this.character.id, data);
+        }
+        if (key == "characterHit") {
+            this.onServer.onCharacterHit(data.characterId, data.byCharacterId);
+            //this.onServer.sendPacketToAllStreamed(this.character.id, data);
+        }
+        if (key == "playerText") {
             this.onServer.onPlayerText(this, data);
         }
     }

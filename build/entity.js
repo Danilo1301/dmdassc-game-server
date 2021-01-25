@@ -6,8 +6,6 @@ class Entity {
     constructor() {
         this.id = -1;
         this.position = new utils_1.Vector3();
-        this.velocity = new utils_1.Vector3();
-        this.rotation = new utils_1.Quaternion();
     }
 }
 exports.Entity = Entity;
@@ -15,6 +13,7 @@ class EntityObject extends Entity {
     constructor() {
         super(...arguments);
         this.attachedTo = -1;
+        this.rotation = new utils_1.Quaternion();
     }
 }
 exports.EntityObject = EntityObject;
@@ -22,6 +21,9 @@ class EntityCharacter extends Entity {
     constructor() {
         super(...arguments);
         this.onVehicleId = -1;
+        this.isAiming = false;
+        this.health = 100;
+        this.aimRotation = new utils_1.Quaternion();
     }
 }
 exports.EntityCharacter = EntityCharacter;
@@ -29,6 +31,7 @@ class EntityVehicle extends Entity {
     constructor() {
         super(...arguments);
         this.modelId = -1;
+        this.rotation = new utils_1.Quaternion();
     }
 }
 exports.EntityVehicle = EntityVehicle;

@@ -7,7 +7,7 @@ class TestServerAI1 {
     constructor(server, entity) {
         this.targetPosition = new utils_1.Vector3();
         this.server = server;
-        this.entity = entity;
+        this.character = entity;
         this.setRandomTargetPosition();
         setInterval(() => {
             this.update();
@@ -21,9 +21,10 @@ class TestServerAI1 {
         this.targetPosition.z = parseFloat((Math.random() * 30 - 15).toFixed(2));
     }
     update() {
-        this.entity.position.x += (this.targetPosition.x - this.entity.position.x) / 400;
-        this.entity.position.z += (this.targetPosition.z - this.entity.position.z) / 400;
-        this.server.broadcastEntity(this.entity);
+        this.character.position.x += (this.targetPosition.x - this.character.position.x) / 400;
+        this.character.position.z += (this.targetPosition.z - this.character.position.z) / 400;
+        this.server.sendCharacterSync(this.character);
+        //this.server.broadcastEntity(this.entity);
     }
 }
 function replaceData(from, to) {
@@ -39,7 +40,7 @@ function replaceData(from, to) {
     }
 }
 class Server {
-    constructor(game, id) {
+    constructor(game) {
         this.maxPlayers = 10;
         this.clients = new Map();
         this.entities = new Map();
@@ -47,8 +48,10 @@ class Server {
         this.lastCheckedStreamed = 0;
         this.lastUpdatedStreamed = 0;
         this.game = game;
-        this.id = id;
+    }
+    start() {
         new TestServerAI1(this, this.createEntityCharacter());
+        //new TestServerAI1(this, this.createEntityCharacter());
         this.createEntityVehicle();
         this.createEntityVehicle();
         this.loadScript(`
@@ -91,22 +94,72 @@ class Server {
 
         `);
     }
-    updateEntity(data) {
-        if (!this.entities.has(data.id)) {
-            return;
-        }
-        var entity = this.entities.get(data.id);
-        replaceData(data, entity);
-        this.broadcastEntity(entity);
-    }
-    broadcastEntity(entity) {
-        //console.log(`Broadcast ${entity.id} (${entity.constructor.name})`)
+    sendPacketToAllStreamed(entityId, packet) {
         this.clients.forEach((client) => {
-            if (client.streamedEntities.streamedEntities.has(entity.id)) {
-                //console.log(`Sending to ${client.id}`)
-                client.send("data_" + entity.constructor.name, entity);
+            if (client.streamedEntities.streamedEntities.has(entityId)) {
+                client.send("onCharacterActiveWeapon", packet);
             }
         });
+    }
+    sendBaseEntitySync(name, data, entityid, toClient = undefined) {
+        var sendToClients = [];
+        if (toClient) {
+            sendToClients.push(toClient);
+        }
+        else {
+            this.clients.forEach((client) => {
+                if (client.streamedEntities.streamedEntities.has(entityid)) {
+                    sendToClients.push(client);
+                }
+            });
+        }
+        for (const client of sendToClients) {
+            client.send(name, data);
+        }
+        //console.log(`Sending sync ${name} to ${sendToClients.length} clients`)
+    }
+    sendCharacterSync(character, toClient = undefined) {
+        var data = {
+            id: character.id,
+            onVehicleId: character.onVehicleId,
+            isAiming: character.isAiming,
+            position: [character.position.x, character.position.y, character.position.z],
+            aimRotation: [character.aimRotation.x, character.aimRotation.y, character.aimRotation.z, character.aimRotation.w]
+        };
+        this.sendBaseEntitySync("onCharacterSync", data, character.id, toClient);
+    }
+    sendVehicleSync(vehicle, toClient = undefined) {
+        var data = {
+            id: vehicle.id,
+            position: [vehicle.position.x, vehicle.position.y, vehicle.position.z],
+            rotation: [vehicle.rotation.x, vehicle.rotation.y, vehicle.rotation.z, vehicle.rotation.w]
+        };
+        this.sendBaseEntitySync("onVehicleSync", data, vehicle.id, toClient);
+    }
+    sendObjectSync(object, toClient = undefined) {
+        var data = {
+            id: object.id,
+            position: [object.position.x, object.position.y, object.position.z]
+        };
+        this.sendBaseEntitySync("onObjectSync", data, object.id, toClient);
+    }
+    onCharacterHit(characterId, byCharacterId) {
+        var e1 = this.entities.get(characterId);
+        var e2 = this.entities.get(byCharacterId);
+        var characterHit = e1;
+        var byCharacter = e2;
+        if (!characterHit.client) {
+            return;
+        }
+        characterHit.health -= 12;
+        if (characterHit.health <= 0) {
+            characterHit.health = 0;
+        }
+        this.sendClientMessage(byCharacter.client.id, `You hit ${characterHit.client ? characterHit.client.id : characterHit.id} ( ${characterHit.health}  HP )`);
+        if (characterHit.health == 0) {
+            characterHit.health = 100;
+            this.setCharacterPosition(characterHit.client.id, 0, 10, 0);
+        }
     }
     callScriptFunction(name, args = []) {
         if (!this.sandbox[name]) {
@@ -119,7 +172,7 @@ class Server {
         var server = this;
         this.sandbox = {};
         this.sandbox.log = function (text) { console.log(`[LOG: ${server.id}] ${text}`); };
-        var funcs = ["sendClientMessageToAll", "sendClientMessage", "setPlayerPosition", "createVehicle"];
+        var funcs = ["sendClientMessageToAll", "sendClientMessage", "setCharacterPosition", "createVehicle"];
         for (const k of funcs) {
             this.sandbox[k] = function () {
                 return server[k].bind(server).apply(null, arguments);
@@ -140,9 +193,15 @@ class Server {
             client.send("delete_entity", entity.id);
         });
     }
-    setPlayerPosition(clientId, x, y, z) {
+    setCharacterPosition(clientId, x, y, z) {
         console.error("not defined");
-        //var client = this.clients.get(clientId)!;
+        var client = this.clients.get(clientId);
+        client.character.position.x = x;
+        client.character.position.x = y;
+        client.character.position.x = z;
+        client.send("onSetCharacterPosition", {
+            position: [x, y, z]
+        });
         //var character = client.character;
         //character.position.x = x;
         //character.position.y = y;
@@ -157,12 +216,20 @@ class Server {
         this.createEntityVehicle();
     }
     sendClientMessage(clientid, message) {
-        this.clients.get(clientid).send("chat_message", message);
+        this.clients.get(clientid).send("onChatMessage", message);
     }
     handleJoinRequest(client) {
         this.clients.set(client.id, client);
+        client.character = this.createEntityCharacter();
+        client.character.client = client;
+        var info = {
+            success: true,
+            playerId: client.character.id
+        };
         client.onServer = this;
-        client.send("join_server_status", true);
+        client.send("joinServerStatus", info);
+        client.checkForStreamedEntities();
+        this.onPlayerConnect(client);
     }
     handleDisconnect(client) {
         this.destroyEntity(client.character);
@@ -203,10 +270,8 @@ class Server {
         });
         entity.id = 0;
         while (ids.includes(entity.id)) {
-            console.log(`${entity.id} already in use`);
             entity.id++;
         }
-        console.log(`Chosen ID: ${entity.id}`);
         this.entities.set(entity.id, entity);
     }
     onPlayerText(client, message) {

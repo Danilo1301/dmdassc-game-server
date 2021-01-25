@@ -12,8 +12,8 @@ class Game {
         let wss = new WebSocket.Server({ port: 3000, 'Access-Control-Allow-Origin': "*" });
         console.log("Game.start()");
         wss.on('connection', this.onSocketConnect.bind(this));
-        var serverMain = this.createServer("Main Server", { maxPlayers: 69 });
-        var serverTest = this.createServer("test", { maxPlayers: 0 });
+        var serverMain = this.createServer("main", { maxPlayers: 69, id: "main" });
+        //var serverTest = this.createServer("test", {maxPlayers: 0});
         setInterval(() => this.update.bind(this)(), 0);
     }
     update() {
@@ -22,12 +22,15 @@ class Game {
         });
     }
     createServer(name, options = {}) {
-        var server = new server_1.default(this, "SERVER:" + this.getRandomId());
+        var server = new server_1.default(this);
         server.name = name;
+        server.id = "SERVER:" + this.getRandomId();
         for (const k in options) {
+            console.log(k);
             server[k] = options[k];
         }
         this.servers.set(server.id, server);
+        server.start();
         return server;
     }
     getServersList() {
@@ -54,7 +57,7 @@ class Game {
         });
         //autoconnect
         this.servers.forEach((server) => {
-            server.handleJoinRequest(client);
+            //server.handleJoinRequest(client);
         });
     }
     createClient(socket) {
