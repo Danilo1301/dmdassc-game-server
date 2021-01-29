@@ -1,293 +1,206 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-const entity_1 = require("./entity");
+exports.PacketSetCharacterPosition = exports.PacketBulletHit = exports.PacketJoinServerStatus = exports.PacketJoinServer = void 0;
+const entityCharacter_1 = require("./entityCharacter");
+const player_1 = require("./player");
 const utils_1 = require("./utils");
-const vm = require('vm');
-class TestServerAI1 {
-    constructor(server, entity) {
-        this.targetPosition = new utils_1.Vector3();
-        this.server = server;
-        this.character = entity;
-        this.setRandomTargetPosition();
-        setInterval(() => {
-            this.update();
-        }, 5);
-        setInterval(() => {
-            this.setRandomTargetPosition();
-        }, 2000);
+const weapon_1 = require("./weapon");
+class PacketJoinServer {
+    constructor() {
+        this.serverId = "";
+        this.nickname = "";
+        this.version = 0;
     }
-    setRandomTargetPosition() {
-        this.targetPosition.x = parseFloat((Math.random() * 30 - 15).toFixed(2));
-        this.targetPosition.z = parseFloat((Math.random() * 30 - 15).toFixed(2));
+}
+exports.PacketJoinServer = PacketJoinServer;
+class PacketJoinServerStatus {
+    constructor() {
+        this.success = false;
+        this.playerId = 0;
+        this.weapons = [];
+    }
+}
+exports.PacketJoinServerStatus = PacketJoinServerStatus;
+class PacketBulletHit {
+    constructor() {
+        this.byCharacterId = -1;
+        this.toCharacterId = -1;
+        this.toVehicleId = -1;
+        this.damage = 0.0;
+    }
+}
+exports.PacketBulletHit = PacketBulletHit;
+class PacketSetCharacterPosition {
+    constructor() {
+        this.id = -1;
+        this.position = new utils_1.Vector3();
+    }
+}
+exports.PacketSetCharacterPosition = PacketSetCharacterPosition;
+class Server {
+    constructor(game, id) {
+        this.name = "";
+        this.maxPlayers = 10;
+        this.weapons = [];
+        this.clients = new Map();
+        this.players = new Map();
+        this.characters = new Map();
+        this.game = game;
+        this.id = id;
+        setInterval(this.update.bind(this), 5);
+        var ak47 = new weapon_1.WeaponInfo();
+        ak47.name = "AK-47";
+        ak47.modelName = "ak47";
+        ak47.muzzlePosition = new utils_1.Vector3(0, 0.233, 0.834);
+        this.weapons.push(ak47);
+        var pistol = new weapon_1.WeaponInfo();
+        pistol.name = "Pistol";
+        pistol.type = weapon_1.WEAPON_TYPE.PISTOL;
+        pistol.modelName = "pistol";
+        pistol.muzzlePosition = new utils_1.Vector3(0, 0.171, 0.353);
+        this.weapons.push(pistol);
+        var carGun = new weapon_1.WeaponInfo();
+        carGun.name = "CarGun";
+        carGun.modelName = "vehicle0";
+        carGun.muzzlePosition = new utils_1.Vector3(0, 0.171, 0.353);
+        this.weapons.push(carGun);
+        console.log(this.weapons);
+    }
+    setup() {
+        console.log(`Server '${this.name}' (${this.id}) created`);
     }
     update() {
-        this.character.position.x += (this.targetPosition.x - this.character.position.x) / 400;
-        this.character.position.z += (this.targetPosition.z - this.character.position.z) / 400;
-        this.server.sendCharacterSync(this.character);
-        //this.server.broadcastEntity(this.entity);
-    }
-}
-function replaceData(from, to) {
-    if (to == undefined) {
-        return;
-    }
-    for (const k in from) {
-        if (typeof k == "object") {
-            replaceData(from[k], to[k]);
-            continue;
-        }
-        to[k] = from[k];
-    }
-}
-class Server {
-    constructor(game) {
-        this.maxPlayers = 10;
-        this.clients = new Map();
-        this.entities = new Map();
-        this.sandbox = {};
-        this.lastCheckedStreamed = 0;
-        this.lastUpdatedStreamed = 0;
-        this.game = game;
-    }
-    start() {
-        new TestServerAI1(this, this.createEntityCharacter());
-        //new TestServerAI1(this, this.createEntityCharacter());
-        this.createEntityVehicle();
-        this.createEntityVehicle();
-        this.loadScript(`
-
-        log("Script started");
-
-        function onPlayerText(playerid, message) {
-            log("CHAT > " + playerid + ": " + message);
-
-            if(message.includes("swear"))
-            {
-                sendClientMessage(playerid, "| WARNING | We don't like bad words here >:/");
-                return false;
-            }
-
-            if(message == "/spawn")
-            {
-                setPlayerPosition(playerid, 0, 0, 0);
-                sendClientMessage(playerid, "| INFO | Teleporting to spawn!");
-                return false;
-            }
-
-            if(message.toLowerCase() == "/car")
-            {
-                createVehicle(0, 2, 0);
-                sendClientMessage(playerid, "| INFO | Vehicle spawned!");
-                return false;
-            }
-            
-        };
-
-        function onPlayerConnect(playerid) {
-            sendClientMessage(playerid, "========== ==========");
-            sendClientMessage(playerid, "* Welcome, " + playerid);
-            sendClientMessage(playerid, "* Type /car to spawn a car");
-            sendClientMessage(playerid, "========== ==========");
-
-            //sendClientMessageToAll("A player connected!");
-        }
-
-        `);
-    }
-    sendPacketToAllStreamed(entityId, packet) {
-        this.clients.forEach((client) => {
-            if (client.streamedEntities.streamedEntities.has(entityId)) {
-                client.send("onCharacterActiveWeapon", packet);
-            }
+        this.players.forEach(player => {
+            player.checkForStreamedEntities();
         });
     }
-    sendBaseEntitySync(name, data, entityid, toClient = undefined) {
-        var sendToClients = [];
-        if (toClient) {
-            sendToClients.push(toClient);
+    handleClientJoin(client, joinPacket) {
+        var packet = new PacketJoinServerStatus();
+        if (this.clients.has(client.id)) {
+            packet.success = false;
         }
         else {
-            this.clients.forEach((client) => {
-                if (client.streamedEntities.streamedEntities.has(entityid)) {
-                    sendToClients.push(client);
-                }
-            });
+            client.onServer = this;
+            this.clients.set(client.id, client);
+            var character = this.createCharacter();
+            var player = this.createPlayer(client);
+            player.nickname = joinPacket.nickname + ` (ID ${player.id})`;
+            player.character = character;
+            character.player = player;
+            player.setup();
+            packet.success = true;
+            packet.playerId = player.id;
+            packet.weapons = this.weapons;
+            this.sendClientMessageToAll(`{00A010}${player.nickname} joined`);
         }
-        for (const client of sendToClients) {
-            client.send(name, data);
-        }
-        //console.log(`Sending sync ${name} to ${sendToClients.length} clients`)
+        client.send("onJoinServerStatus", packet);
     }
-    sendCharacterSync(character, toClient = undefined) {
-        var data = {
-            id: character.id,
-            onVehicleId: character.onVehicleId,
-            isAiming: character.isAiming,
-            position: [character.position.x, character.position.y, character.position.z],
-            aimRotation: [character.aimRotation.x, character.aimRotation.y, character.aimRotation.z, character.aimRotation.w]
-        };
-        this.sendBaseEntitySync("onCharacterSync", data, character.id, toClient);
+    createCharacter() {
+        var character = new entityCharacter_1.default();
+        character.id = 0;
+        while (this.characters.has(character.id))
+            character.id++;
+        this.characters.set(character.id, character);
+        return character;
     }
-    sendVehicleSync(vehicle, toClient = undefined) {
-        var data = {
-            id: vehicle.id,
-            position: [vehicle.position.x, vehicle.position.y, vehicle.position.z],
-            rotation: [vehicle.rotation.x, vehicle.rotation.y, vehicle.rotation.z, vehicle.rotation.w]
-        };
-        this.sendBaseEntitySync("onVehicleSync", data, vehicle.id, toClient);
-    }
-    sendObjectSync(object, toClient = undefined) {
-        var data = {
-            id: object.id,
-            position: [object.position.x, object.position.y, object.position.z]
-        };
-        this.sendBaseEntitySync("onObjectSync", data, object.id, toClient);
-    }
-    onCharacterHit(characterId, byCharacterId) {
-        var e1 = this.entities.get(characterId);
-        var e2 = this.entities.get(byCharacterId);
-        var characterHit = e1;
-        var byCharacter = e2;
-        if (!characterHit.client) {
-            return;
-        }
-        characterHit.health -= 12;
-        if (characterHit.health <= 0) {
-            characterHit.health = 0;
-        }
-        this.sendClientMessage(byCharacter.client.id, `You hit ${characterHit.client ? characterHit.client.id : characterHit.id} ( ${characterHit.health}  HP )`);
-        if (characterHit.health == 0) {
-            characterHit.health = 100;
-            this.setCharacterPosition(characterHit.client.id, 0, 10, 0);
-        }
-    }
-    callScriptFunction(name, args = []) {
-        if (!this.sandbox[name]) {
-            return true;
-        }
-        var result = this.sandbox[name].apply(null, args) === false ? false : true;
-        return result;
-    }
-    loadScript(code) {
-        var server = this;
-        this.sandbox = {};
-        this.sandbox.log = function (text) { console.log(`[LOG: ${server.id}] ${text}`); };
-        var funcs = ["sendClientMessageToAll", "sendClientMessage", "setCharacterPosition", "createVehicle"];
-        for (const k of funcs) {
-            this.sandbox[k] = function () {
-                return server[k].bind(server).apply(null, arguments);
-            };
-        }
-        try {
-            vm.createContext(this.sandbox);
-            vm.runInContext(code, this.sandbox);
-        }
-        catch (e) {
-            console.log("Could not start server", e);
-        }
-    }
-    destroyEntity(entity) {
-        console.log(`Destroyed entity ${entity.id}`);
-        this.entities.delete(entity.id);
-        this.clients.forEach((client) => {
-            client.send("delete_entity", entity.id);
-        });
-    }
-    setCharacterPosition(clientId, x, y, z) {
-        console.error("not defined");
-        var client = this.clients.get(clientId);
-        client.character.position.x = x;
-        client.character.position.x = y;
-        client.character.position.x = z;
-        client.send("onSetCharacterPosition", {
-            position: [x, y, z]
-        });
-        //var character = client.character;
-        //character.position.x = x;
-        //character.position.y = y;
-        //character.position.z = z;
-    }
-    sendClientMessageToAll(message) {
-        this.clients.forEach((client) => {
-            this.sendClientMessage(client.id, message);
-        });
-    }
-    createVehicle(x, y, z) {
-        this.createEntityVehicle();
-    }
-    sendClientMessage(clientid, message) {
-        this.clients.get(clientid).send("onChatMessage", message);
-    }
-    handleJoinRequest(client) {
-        this.clients.set(client.id, client);
-        client.character = this.createEntityCharacter();
-        client.character.client = client;
-        var info = {
-            success: true,
-            playerId: client.character.id
-        };
-        client.onServer = this;
-        client.send("joinServerStatus", info);
-        client.checkForStreamedEntities();
-        this.onPlayerConnect(client);
-    }
-    handleDisconnect(client) {
-        this.destroyEntity(client.character);
+    handleClientDisconnect(client) {
         this.clients.delete(client.id);
-        //this.entities.splice(this.entities.indexOf(client.character), 1);
-        this.onPlayerDisconnect(client);
+        this.players.delete(client.player.id);
+        this.characters.delete(client.player.character.id);
+        this.sendClientMessageToAll(`{9B4844}${client.player.nickname} left`);
     }
-    createEntityCharacter() {
-        var entity = new entity_1.EntityCharacter();
-        entity.position.x = parseFloat((Math.random() * 6 - 3).toFixed(2));
-        entity.position.y = 1;
-        entity.position.z = parseFloat((Math.random() * 6 - 3).toFixed(2));
-        this.setEntityId(entity);
-        return entity;
+    createPlayer(client) {
+        var player = new player_1.default(client, 0);
+        player.id = 0;
+        while (this.players.has(player.id))
+            player.id++;
+        client.player = player;
+        this.players.set(player.id, player);
+        return player;
     }
-    createEntityVehicle() {
-        var entity = new entity_1.EntityVehicle();
-        entity.position.x = parseFloat((Math.random() * 6 - 3).toFixed(2));
-        entity.position.y = 1;
-        entity.position.z = parseFloat((Math.random() * 6 - 3).toFixed(2));
-        this.setEntityId(entity);
-        return entity;
+    sendOnCharacterStreamIn(forClient, character) {
+        var packet = new entityCharacter_1.PacketCharacterStreamIn();
+        packet.id = character.id;
+        packet.nickname = character.player ? character.player.nickname : "Bot " + character.id;
+        packet.position = character.position;
+        forClient.send("onCharacterStreamIn", packet);
     }
-    onPlayerConnect(client) {
-        if (this.callScriptFunction("onPlayerConnect", [client.id])) {
-            this.sendClientMessageToAll("[<] " + client.id + " joined");
-        }
-    }
-    onPlayerDisconnect(client) {
-        if (this.callScriptFunction("onPlayerDisconnect", [client.id])) {
-            this.sendClientMessageToAll("[<] " + client.id + " left");
-        }
-    }
-    setEntityId(entity) {
-        var ids = [];
-        this.entities.forEach((e) => {
-            ids.push(e.id);
+    characterSync(data) {
+        var character = this.characters.get(data.id);
+        character.position = data.position;
+        character.upDownKeys = data.upDownKeys;
+        character.leftRightKeys = data.leftRightKeys;
+        character.aimDir = data.aimDir;
+        //character.health = data.health;
+        this.executeForAllClients((client) => {
+            this.sendOnCharacterSync(client, character);
         });
-        entity.id = 0;
-        while (ids.includes(entity.id)) {
-            entity.id++;
-        }
-        this.entities.set(entity.id, entity);
     }
-    onPlayerText(client, message) {
-        if (this.callScriptFunction("onPlayerText", [client.id, message])) {
-            this.sendClientMessageToAll(client.id + ": " + message);
+    executeForAllClients(arg0) {
+        this.clients.forEach(c => {
+            arg0(c);
+        });
+    }
+    sendOnCharacterSync(forClient, character) {
+        var packet = new entityCharacter_1.PacketCharacterSync();
+        packet.id = character.id;
+        packet.position = character.position;
+        packet.rotation = character.rotation;
+        packet.upDownKeys = character.upDownKeys;
+        packet.leftRightKeys = character.leftRightKeys;
+        packet.aimDir = character.aimDir;
+        packet.health = character.health;
+        forClient.send("onCharacterSync", packet);
+    }
+    aimSync(data) {
+        var character = this.characters.get(data.id);
+        character.isAiming = data.aiming;
+        character.weaponId = data.weaponId;
+        this.executeForAllClients((client) => {
+            this.sendOnAimSync(client, character, data.hasShot);
+        });
+    }
+    sendOnAimSync(forClient, character, hasShot) {
+        var packet = new entityCharacter_1.PacketAimSync();
+        packet.id = character.id;
+        packet.aiming = character.isAiming;
+        packet.hasShot = hasShot;
+        packet.weaponId = character.weaponId;
+        forClient.send("onAimSync", packet);
+    }
+    bulletHit(data) {
+        var byCharacter = this.characters.get(data.byCharacterId);
+        var toCharacter = this.characters.get(data.toCharacterId);
+        var weapon = this.weapons[byCharacter.weaponId];
+        toCharacter.health -= weapon.damage;
+        if (toCharacter.health <= 0) {
+            toCharacter.health = 100;
+            this.sendClientMessageToAll(`{FFA300}${byCharacter.player.nickname} killed ${toCharacter.player.nickname} using ${weapon.name}`);
+            this.setPlayerPosition(toCharacter.player.id, 0, 5, 0);
         }
     }
-    update() {
-        var time = new Date().getTime();
-        if (time - this.lastCheckedStreamed >= 1000) {
-            //console.log(`Checking for streamed entities`)
-            this.lastCheckedStreamed = time;
-            this.clients.forEach((client) => {
-                client.checkForStreamedEntities();
-            });
-        }
+    setPlayerPosition(playerId, x, y, z) {
+        var player = this.players.get(playerId);
+        var packet = new PacketSetCharacterPosition();
+        packet.id = player.character.id;
+        packet.position.x = x;
+        packet.position.y = y;
+        packet.position.z = z;
+        this.executeForAllClients((client) => {
+            client.send("onSetCharacterPosition", packet);
+        });
+    }
+    playerText(character, text) {
+        this.sendClientMessageToAll(`{D8C99C}${character.player.nickname}: {FFFFFF}${text}`);
+    }
+    sendClientMessageToAll(text) {
+        this.executeForAllClients((client) => {
+            this.sendClientMessage(client.player.id, text);
+        });
+    }
+    sendClientMessage(playerId, text) {
+        var client = this.players.get(playerId).client;
+        client.send("onChatMessage", text);
     }
 }
 exports.default = Server;
