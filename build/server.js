@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PacketDialogResponse = exports.PacketShowDialog = exports.PacketSetCharacterPosition = exports.PacketBulletHit = exports.PacketJoinServerStatus = exports.PacketJoinServer = void 0;
+exports.PacketUpdateNametag = exports.PacketDialogResponse = exports.PacketShowDialog = exports.PacketSetCharacterPosition = exports.PacketBulletHit = exports.PacketJoinServerStatus = exports.PacketJoinServer = void 0;
 const entityCharacter_1 = require("./entityCharacter");
 const player_1 = require("./player");
 const utils_1 = require("./utils");
@@ -59,6 +59,13 @@ class PacketDialogResponse {
     }
 }
 exports.PacketDialogResponse = PacketDialogResponse;
+class PacketUpdateNametag {
+    constructor() {
+        this.id = 0;
+        this.text = "";
+    }
+}
+exports.PacketUpdateNametag = PacketUpdateNametag;
 class Server {
     constructor(game, id) {
         this.name = "";
@@ -151,11 +158,13 @@ class Server {
         {
             if (dialogid == DIALOG_CHANGE_NICK)
             {
-                if(response)
+                if(response && inputtext.length > 0)
                 {
                     setPlayerNickname(playerid, inputtext);
 
-                    sendClientMessage(playerid, "{FFFF00}You changed your nick to {0000FF}" + inputtext);
+                    sendClientMessage(playerid, "{FFFF00}You changed your nick to {FFFFFF}" + inputtext);
+
+                    
                 }
             }
 
@@ -231,6 +240,7 @@ class Server {
     setPlayerNickname(playerId, nickname) {
         var player = this.players.get(playerId);
         player.nickname = nickname;
+        this.sendOnUpdateNametag(player);
     }
     handleClientJoin(client, joinPacket) {
         var packet = new PacketJoinServerStatus();
@@ -337,6 +347,14 @@ class Server {
         packet.hasShot = hasShot;
         packet.weaponId = character.weaponId;
         forClient.send("onAimSync", packet);
+    }
+    sendOnUpdateNametag(player) {
+        var packet = new PacketUpdateNametag();
+        packet.id = player.character.id;
+        packet.text = player.nickname;
+        this.executeForAllClients((client) => {
+            client.send("onUpdateNametag", packet);
+        });
     }
     bulletHit(data) {
         var byCharacter = this.characters.get(data.byCharacterId);
