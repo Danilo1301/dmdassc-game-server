@@ -7,6 +7,7 @@ class PacketCharacterStreamIn {
         this.id = -1;
         this.position = new utils_1.Vector3();
         this.nickname = "";
+        this.playerId = -1;
     }
 }
 exports.PacketCharacterStreamIn = PacketCharacterStreamIn;

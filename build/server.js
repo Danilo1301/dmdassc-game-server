@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PacketSetCharacterPosition = exports.PacketBulletHit = exports.PacketJoinServerStatus = exports.PacketJoinServer = void 0;
+exports.PacketDialogResponse = exports.PacketShowDialog = exports.PacketSetCharacterPosition = exports.PacketBulletHit = exports.PacketJoinServerStatus = exports.PacketJoinServer = void 0;
 const entityCharacter_1 = require("./entityCharacter");
 const player_1 = require("./player");
 const utils_1 = require("./utils");
 const weapon_1 = require("./weapon");
+const vm = require('vm');
 class PacketJoinServer {
     constructor() {
         this.serverId = "";
@@ -18,6 +19,7 @@ class PacketJoinServerStatus {
         this.success = false;
         this.playerId = 0;
         this.weapons = [];
+        this.updateRate = 0;
     }
 }
 exports.PacketJoinServerStatus = PacketJoinServerStatus;
@@ -37,6 +39,26 @@ class PacketSetCharacterPosition {
     }
 }
 exports.PacketSetCharacterPosition = PacketSetCharacterPosition;
+class PacketShowDialog {
+    constructor() {
+        this.dialogId = 0;
+        this.style = 0;
+        this.title = "";
+        this.info = "";
+        this.button1 = "";
+        this.button2 = "";
+    }
+}
+exports.PacketShowDialog = PacketShowDialog;
+class PacketDialogResponse {
+    constructor() {
+        this.dialogId = 0;
+        this.response = 0;
+        this.listitem = 0;
+        this.inputtext = "";
+    }
+}
+exports.PacketDialogResponse = PacketDialogResponse;
 class Server {
     constructor(game, id) {
         this.name = "";
@@ -45,9 +67,12 @@ class Server {
         this.clients = new Map();
         this.players = new Map();
         this.characters = new Map();
+        this.sendPacketRate = 0.010;
+        this.clientSendPacketRate = 0.010;
+        this._lastSentPacket = 0;
+        this.sandbox = {};
         this.game = game;
         this.id = id;
-        setInterval(this.update.bind(this), 5);
         var ak47 = new weapon_1.WeaponInfo();
         ak47.name = "AK-47";
         ak47.modelName = "ak47";
@@ -64,15 +89,148 @@ class Server {
         carGun.modelName = "vehicle0";
         carGun.muzzlePosition = new utils_1.Vector3(0, 0.171, 0.353);
         this.weapons.push(carGun);
-        console.log(this.weapons);
     }
     setup() {
         console.log(`Server '${this.name}' (${this.id}) created`);
+        setInterval(this.update.bind(this), 0);
+        this.loadScript(`
+
+        let DIALOG_CHANGE_NICK = 0;
+        
+
+        log("Script started");
+
+        
+
+        function onPlayerText(playerid, message) {
+            log("CHAT > " + playerid + ": " + message);
+
+            if(message.includes("swear"))
+            {
+                sendClientMessage(playerid, "| WARNING | We don't like bad words here >:/");
+                return false;
+            }
+
+            if(message == "/spawn")
+            {
+                setPlayerPosition(playerid, 0, 0, 0);
+                sendClientMessage(playerid, "| INFO | Teleporting to spawn!");
+                return false;
+            }
+
+            if(message.toLowerCase() == "/help")
+            {
+                sendClientMessage(playerid, "{FFFF00}============ Commands ========================");
+                sendClientMessage(playerid, "> /nick - Change your nick");
+                sendClientMessage(playerid, "{FFFF00}==============================================");
+
+                return false;
+            }
+
+            if(message.toLowerCase() == "/nick")
+            {
+                showChangeNickDialog(playerid);
+
+                return false;
+            }
+            
+        };
+
+        function onPlayerConnect(playerid) {
+            setPlayerNickname(playerid, "NiceName");
+
+            sendClientMessage(playerid, "{FFFF00}==============================================");
+            sendClientMessage(playerid, "Welcome, " + getPlayerNickname(playerid) + "!");
+            sendClientMessage(playerid, "Type {FF0000}/help {FFFFFF}to a list of commands");
+            sendClientMessage(playerid, "{FFFF00}==============================================");
+
+            showChangeNickDialog(playerid);
+        }
+
+        function onDialogResponse(playerid, dialogid, response, listitem, inputtext)
+        {
+            if (dialogid == DIALOG_CHANGE_NICK)
+            {
+                if(response)
+                {
+                    setPlayerNickname(playerid, inputtext);
+
+                    sendClientMessage(playerid, "{FFFF00}You changed your nick to {0000FF}" + inputtext);
+                }
+            }
+
+
+        }
+
+        function showChangeNickDialog(playerid)
+        {
+            showPlayerDialog(playerid, DIALOG_CHANGE_NICK, 0, "Change Nickname", "Type your new nickname below", "Ok", "Cancel");
+        }
+
+        `);
+    }
+    showPlayerDialog(playerId, dialogId, style, title, info, button1, button2) {
+        var packet = new PacketShowDialog();
+        packet.dialogId = dialogId;
+        packet.style = style;
+        packet.title = title;
+        packet.info = info;
+        packet.button1 = button1;
+        packet.button2 = button2;
+        var client = this.players.get(playerId).client;
+        client.send("onShowDialog", packet);
+    }
+    loadScript(code) {
+        var server = this;
+        this.sandbox = {};
+        this.sandbox.log = function (text) { console.log(`[LOG: ${server.id}] ${text}`); };
+        var funcs = ["showPlayerDialog", "setPlayerNickname", "sendClientMessageToAll", "sendClientMessage", "setCharacterPosition", "getPlayerNickname"];
+        for (const k of funcs) {
+            this.sandbox[k] = function () {
+                return server[k].bind(server).apply(null, arguments);
+            };
+        }
+        try {
+            vm.createContext(this.sandbox);
+            vm.runInContext(code, this.sandbox);
+        }
+        catch (e) {
+            console.log("Could not start server", e);
+        }
+    }
+    callScriptFunction(name, args = []) {
+        if (!this.sandbox[name]) {
+            return true;
+        }
+        var result = this.sandbox[name].apply(null, args) === false ? false : true;
+        return result;
     }
     update() {
         this.players.forEach(player => {
             player.checkForStreamedEntities();
         });
+        var time = (new Date()).getTime();
+        if (time - this._lastSentPacket > this.sendPacketRate * 1000) {
+            //console.log(time - this._lastSentPacket)
+            this._lastSentPacket = time;
+            this.clients.forEach(client => {
+                for (const packet of client.storedPackets) {
+                    client.socket.send(JSON.stringify({ index: packet[2], key: packet[0], data: packet[1] }));
+                }
+                client.storedPackets = [];
+            });
+        }
+    }
+    getPlayerNickname(playerId) {
+        var player = this.players.get(playerId);
+        if (!player) {
+            return "";
+        }
+        return player.nickname;
+    }
+    setPlayerNickname(playerId, nickname) {
+        var player = this.players.get(playerId);
+        player.nickname = nickname;
     }
     handleClientJoin(client, joinPacket) {
         var packet = new PacketJoinServerStatus();
@@ -84,16 +242,27 @@ class Server {
             this.clients.set(client.id, client);
             var character = this.createCharacter();
             var player = this.createPlayer(client);
-            player.nickname = joinPacket.nickname + ` (ID ${player.id})`;
+            player.nickname = joinPacket.nickname;
             player.character = character;
             character.player = player;
             player.setup();
             packet.success = true;
             packet.playerId = player.id;
             packet.weapons = this.weapons;
-            this.sendClientMessageToAll(`{00A010}${player.nickname} joined`);
+            packet.updateRate = this.clientSendPacketRate;
+            this.onPlayerConnect(player);
         }
         client.send("onJoinServerStatus", packet);
+    }
+    onPlayerConnect(player) {
+        if (this.callScriptFunction("onPlayerConnect", [player.id])) {
+            this.sendClientMessageToAll(`{00A010}${player.nickname} joined`);
+        }
+    }
+    onPlayerDisconnect(player) {
+        if (this.callScriptFunction("onPlayerDisconnect", [player.id])) {
+            this.sendClientMessageToAll(`{9B4844}${player.nickname} left`);
+        }
     }
     createCharacter() {
         var character = new entityCharacter_1.default();
@@ -107,7 +276,7 @@ class Server {
         this.clients.delete(client.id);
         this.players.delete(client.player.id);
         this.characters.delete(client.player.character.id);
-        this.sendClientMessageToAll(`{9B4844}${client.player.nickname} left`);
+        this.onPlayerDisconnect(client.player);
     }
     createPlayer(client) {
         var player = new player_1.default(client, 0);
@@ -123,6 +292,7 @@ class Server {
         packet.id = character.id;
         packet.nickname = character.player ? character.player.nickname : "Bot " + character.id;
         packet.position = character.position;
+        packet.playerId = character.player ? character.player.id : -1;
         forClient.send("onCharacterStreamIn", packet);
     }
     characterSync(data) {
@@ -190,8 +360,16 @@ class Server {
             client.send("onSetCharacterPosition", packet);
         });
     }
-    playerText(character, text) {
-        this.sendClientMessageToAll(`{D8C99C}${character.player.nickname}: {FFFFFF}${text}`);
+    playerText(player, text) {
+        if (this.callScriptFunction("onPlayerText", [player.id, text])) {
+            this.sendClientMessageToAll(`{D8C99C}${player.nickname}{FFFFFF}[${player.id}]: ${text}`);
+        }
+    }
+    dialogResponse(player, data) {
+        console.log("dialogResponse", data);
+        if (this.callScriptFunction("onDialogResponse", [player.id, data.dialogId, data.response, data.listitem, data.inputtext])) {
+            console.log("dialog response yay");
+        }
     }
     sendClientMessageToAll(text) {
         this.executeForAllClients((client) => {

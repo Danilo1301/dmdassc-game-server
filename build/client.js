@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 class Client {
     constructor(game, id, socket) {
+        this.sendPacketIndex = 0;
+        this.storedPackets = [];
         this.game = game;
         this.id = id;
         this.socket = socket;
@@ -10,7 +12,9 @@ class Client {
         this.socket.on('message', message => {
             try {
                 var packet = JSON.parse(message);
-                this.onReceivePacket(packet.key, packet.data);
+                setTimeout(() => {
+                    this.onReceivePacket(packet.key, packet.data);
+                }, Math.random() * 40 + 70);
             }
             catch (error) {
                 console.log("Error processing packet ", message, error);
@@ -20,7 +24,8 @@ class Client {
         this.onConnect();
     }
     send(key, data) {
-        this.socket.send(JSON.stringify({ key: key, data: data }));
+        this.storedPackets.push([key, data, this.sendPacketIndex]);
+        this.sendPacketIndex++;
     }
     onReceivePacket(key, data) {
         //console.log(`${this.id}: Received ${key}`, data)
@@ -44,7 +49,10 @@ class Client {
             this.onServer.bulletHit(data);
         }
         if (key == "playerText") {
-            this.onServer.playerText(this.player.character, data);
+            this.onServer.playerText(this.player, data);
+        }
+        if (key == "dialogResponse") {
+            this.onServer.dialogResponse(this.player, data);
         }
     }
     onConnect() {
